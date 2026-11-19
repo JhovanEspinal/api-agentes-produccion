@@ -1,0 +1,16 @@
+fastapi>=0.165
+uvicorn>=0.54
+redis>=8.1,<9
+langgraph>=1.2.23
+langgraph-checkpoint-redis>=0.6
+langsmith>=0.15
+langchain-core>=1.8
+langchain-anthropic>=1.7.11
+langchain-openai>=1.8
+langchain-ollama>=1.1
+anthropic>=2.11
+openai>=3.56
+aiosqlite>=0.22
+pydantic>=2.14
+python-dotenv>=1.2
+httpx>=0.28
