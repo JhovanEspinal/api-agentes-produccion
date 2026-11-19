@@ -96,6 +96,22 @@ Requiere Python 3.12, Docker para Redis, una clave de LLM y una clave gratuita d
 
 Redis debe ser **8.0 o superior**, o Redis Stack: `langgraph-checkpoint-redis` necesita los módulos RedisJSON y RediSearch, que vienen incluidos desde Redis 8.
 
+### Variables de entorno
+
+| Variable | Descripción | Por defecto |
+|---|---|---|
+| `REDIS_URL` | Conexión a Redis para trabajos, cola y checkpoints. En Docker Compose se reemplaza por `redis://redis:6379/0` | `redis://localhost:6379/0` |
+| `WORKER_CONCURRENCY` | Trabajos que el worker atiende en paralelo | `5` |
+| `RUN_WORKER_IN_API` | `true` corre el worker dentro de la API; `false` lo deja para `python -m app.worker` | `true` |
+| `JOB_TTL_S` | Segundos que se conserva un trabajo en Redis | `604800` (7 días) |
+| `LLM_PROVIDER` | `anthropic`, `openai` u `ollama` | `anthropic` |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Clave del proveedor elegido. Ollama no la necesita | — |
+| `SUPERVISOR_MODEL` / `WORKER_MODEL` | Modelo del supervisor y de los especialistas | `claude-sonnet-5-5` y `claude-haiku-5-5`, `gpt-4o` y `gpt-4o-mini`, o `llama3.2` |
+| `OLLAMA_BASE_URL` | Dirección del servidor de Ollama | La de Ollama |
+| `LANGSMITH_TRACING` | `true` activa las trazas | Desactivadas |
+| `LANGSMITH_API_KEY` | Clave de LangSmith. Si falta, la API arranca sin trazas y lo avisa en el log | — |
+| `LANGSMITH_PROJECT` | Proyecto donde se agrupan las trazas | `api-agentes-produccion` |
+
 ```bash
 copy .env.example .env      # completa ANTHROPIC_API_KEY (u OPENAI_API_KEY) y LANGSMITH_API_KEY
 ```
@@ -137,6 +153,62 @@ curl http://localhost:8000/tasks/<job_id>
 curl -X POST http://localhost:8000/tasks/<job_id>/approve -H "Content-Type: application/json" -d "{\"aprobado\": true, \"revisor\": \"jhovan\", \"comentario\": \"Revisado\"}"
 curl http://localhost:8000/reports/<job_id>
 ```
+
+### Ejemplo de respuestas
+
+**Ejemplo ilustrativo del formato, no es una salida registrada:** la API nunca se ha ejecutado con un LLM real. Las cifras son las que calculan las herramientas sobre `seed.sql`, pero el texto de la respuesta depende del modelo.
+
+`POST /tasks` responde al instante:
+
+```json
+{"job_id": "3f2c9a7e5b1d4c6e8a0f2b4d6e8a1c3e", "estado": "PENDING", "consultar_en": "/tasks/3f2c9a7e5b1d4c6e8a0f2b4d6e8a1c3e"}
+```
+
+`GET /tasks/{job_id}` con `"publicar": true`, mientras espera la aprobación:
+
+```json
+{
+  "job_id": "3f2c9a7e5b1d4c6e8a0f2b4d6e8a1c3e",
+  "estado": "WAITING_APPROVAL",
+  "solicitud": "Compara los audífonos AuraSound X2 y Nimbus Pro",
+  "publicar": true,
+  "creado": "2026-11-19T21:04:11.512304+00:00",
+  "actualizado": "2026-11-19T21:04:38.077912+00:00",
+  "respuesta": "Recomiendo los AuraSound X2: promedian 4,17 estrellas en 6 reseñas, con 83,33% de 4 o 5 estrellas...",
+  "delegacion": [
+    "[supervisor] -> researcher: Faltan los datos de ambos productos.",
+    "[researcher] Investigación v1: AuraSound X2 (6 reseñas), Nimbus Pro (6 reseñas)",
+    "[supervisor] -> analyst: La investigación ya cubre los dos productos.",
+    "[analyst] Análisis v1 sobre investigación v1: AuraSound X2 (promedio 4.17), Nimbus Pro (promedio 2.5)",
+    "[supervisor] -> finish: La investigación y el análisis vigentes cubren ambos productos.",
+    "[validator] Aprobado",
+    "[synthesizer] Respuesta final redactada"
+  ],
+  "aprobacion_pendiente": {
+    "accion": "publicar_informe",
+    "motivo": "Publicar el informe tiene efectos fuera del sistema: queda visible para otros equipos.",
+    "borrador": "Recomiendo los AuraSound X2: promedian 4,17 estrellas en 6 reseñas..."
+  },
+  "aprobacion": null,
+  "publicado": false,
+  "error": null
+}
+```
+
+Después de `POST /tasks/{job_id}/approve`, el mismo trabajo termina en `"estado": "DONE"` y `"publicado": true`, y la delegación suma dos pasos:
+
+```json
+"[human] jhovan aprobó la publicación: Revisado",
+"[publisher] Informe publicado como report:3f2c9a7e5b1d4c6e8a0f2b4d6e8a1c3e"
+```
+
+Si el grafo falla con un error que los agentes no pueden manejar, por ejemplo una API key inválida, el trabajo queda así y el cliente deja de consultar:
+
+```json
+{"job_id": "...", "estado": "FAILED", "error": "AuthenticationError: Error code: 401 - ...", "...": "..."}
+```
+
+Los errores transitorios del LLM no llegan hasta aquí: los agentes los reintentan y, si persisten, aplican su alternativa por defecto.
 
 ## Prueba de 5 peticiones concurrentes
 
